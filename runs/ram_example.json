@@ -1,0 +1,15 @@
+{
+  "name": "Press ram strokes",
+  "points": [
+    {"name": "ram", "x": 480, "y": 150, "algo": "csrt", "box": 32}
+  ],
+  "analyses": [
+    {"type": "ram", "item": "ram", "band": 0.05}
+  ],
+  "segments": [
+    {"name": "Downstroke", "start": "Ram starts downstroke", "end": "Ram reaches bottom"},
+    {"name": "Upstroke", "start": "Ram starts upstroke", "end": "Ram reaches top"}
+  ],
+  "fill_gaps": 10,
+  "smooth": 5
+}

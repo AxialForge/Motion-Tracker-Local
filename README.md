@@ -18,9 +18,15 @@ with known ground truth.
   idle at top, peak/mean speed, cycle times, min/max/mean with outlier flags.
 - Generic reusable events: line crossing, zone enter/leave, start/stop moving, min/max.
 - Session file (SQLite `.mtp`), export of track data, event log, cycle summary (CSV/XLSX), optional scale.
+- Plots: position vs time per item with events marked (PNG or PDF).
+- Saved runs: a JSON file of points + analyses + segment bounds, applied to one clip or a batch
+  (`mt run`), with per-clip sessions, exports, plots and one combined summary. See `runs/ram_example.json`.
+- Dot colour is read from each seed patch, so colour can differ per video or per point. Colourless dots
+  (white, grey, black) fall back to template matching: they track and recover, but with lower precision
+  (about 3 px after re-acquisition vs under 1 px for coloured dots), so prefer coloured dots.
 
-Not yet: any UI, billet/zone/operator modes, NVDEC decode, annotated video, PDF/PNG outputs,
-backward re-tracking, stabilization, multi-phone sync.
+Not yet: any UI, billet blob tracking (Phase 2; needed for the billet events), NVDEC decode,
+annotated video, backward re-tracking, stabilization, multi-phone sync.
 
 ## Setup (Windows)
 
@@ -40,6 +46,8 @@ mt probe clips\press7.mov
 mt track clips\press7.mov -p ram,812,430 -s press7.mtp      # name,x,y[,algo[,seed_frame[,box]]]
 mt events press7.mtp ram
 mt export press7.mtp out --item ram --xlsx
+mt plot press7.mtp press7.png
+mt run runs\ram_example.json clips\*.mov -o out   # same points on many clips (fixed framing only)
 ```
 
 `mt track` prints frames/second as it runs: that is your benchmark number on your laptop.

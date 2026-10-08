@@ -103,3 +103,40 @@ def test_smooth_keeps_nan_gaps():
                conf=np.ones(n, np.float32), flags=np.zeros(n, np.uint8))
     out = analysis.smooth(tr, 5)
     assert np.isnan(out.x[20:25]).all() and not np.isnan(out.x[:20]).any()
+
+
+@pytest.mark.parametrize("name,bgr", [("blue", (220, 80, 30)), ("yellow", (30, 220, 230)),
+                                      ("white", (250, 250, 250)), ("black", (15, 15, 15))])
+def test_dot_colour_varies_per_video(small_spec, tmp_path, name, bgr):
+    """Colour is read from each seed patch. Colourless dots fall back to template matching."""
+    spec = replace(small_spec, seconds=4, dot_bgr=bgr, occlude=[(1.2, 1.5)])
+    p = tmp_path / f"{name}.mp4"
+    write_clip(p, spec)
+    (tr,) = track_points(FrameReader(str(p)), [PointSpec("d", spec.x, spec.y_top)])
+    err = _errors(tr, spec)
+    assert not np.isnan(err[tr.t > 1.7]).any()  # re-acquired after the occlusion
+    assert err[tr.t > 1.7].max() < 4.0 and err[tr.t < 1.1].max() < 3.0
+    hidden = (tr.t >= 1.25) & (tr.t < 1.5)
+    assert ((tr.flags[hidden] & (LOST | LOW_CONF | RECOVERED)) > 0).any()
+
+
+def test_mixed_dot_colours_in_one_video(small_spec, tmp_path):
+    """Each point carries its own colour model, so two differently coloured dots do not interfere."""
+    import cv2
+    from motion_tracker.synthetic import _background, render_frame
+    spec = replace(small_spec, seconds=3)
+    p = tmp_path / "mixed.mp4"
+    # render a second, static green dot alongside the ram dot
+    import subprocess
+    bg, rng = _background(spec), np.random.default_rng(3)
+    proc = subprocess.Popen(["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", "640x360", "-r", "30",
+                             "-i", "-", "-c:v", "libx264", "-crf", "10", "-pix_fmt", "yuv420p", str(p)], stdin=subprocess.PIPE)
+    for i in range(90):
+        f = render_frame(spec, bg, i / 30, rng)
+        cv2.circle(f, (500, 120), 7, (60, 200, 60), -1, cv2.LINE_AA)
+        proc.stdin.write(f.tobytes())
+    proc.stdin.close()
+    assert proc.wait() == 0
+    a, b = track_points(FrameReader(str(p)), [PointSpec("ram", spec.x, spec.y_top), PointSpec("fixed", 500, 120, algo="kcf")])
+    assert _errors(a, spec).max() < 2.0
+    assert np.hypot(b.x - 500, b.y - 120).max() < 1.5

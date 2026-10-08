@@ -86,6 +86,22 @@ def cmd_export(a) -> int:
     return 0
 
 
+def cmd_plot(a) -> int:
+    from . import plots
+
+    with Session(a.session) as s:
+        tracks, events = s.load_tracks(), s.load_events()
+    print(plots.plot_tracks(tracks, events, a.out, axis=a.axis))
+    return 0
+
+
+def cmd_run(a) -> int:
+    from .runs import Run, run_batch
+
+    print(run_batch(Run.load(a.run), a.clips, a.outdir, xlsx=a.xlsx))
+    return 0
+
+
 def cmd_synth(a) -> int:
     from .synthetic import RamSpec, write_clip
 
@@ -122,6 +138,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--xlsx", action="store_true")
     p.add_argument("--scale", type=float, nargs=5, metavar=("X1", "Y1", "X2", "Y2", "DIST_MM"))
     p.set_defaults(fn=cmd_export)
+    p = sub.add_parser("plot", help="position-vs-time plot (PNG or PDF) with events marked")
+    p.add_argument("session")
+    p.add_argument("out")
+    p.add_argument("--axis", choices=["x", "y"], default="y")
+    p.set_defaults(fn=cmd_plot)
+    p = sub.add_parser("run", help="apply a saved run (JSON) to one or many clips")
+    p.add_argument("run")
+    p.add_argument("clips", nargs="+")
+    p.add_argument("-o", "--outdir", default="out")
+    p.add_argument("--xlsx", action="store_true")
+    p.set_defaults(fn=cmd_run)
     p = sub.add_parser("synth", help="generate a synthetic press clip with known ground truth")
     p.add_argument("out")
     p.add_argument("--fps", type=float, default=30)

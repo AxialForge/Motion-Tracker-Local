@@ -15,6 +15,7 @@ from .base import PointSpec, Sample, register_plugin
 
 LOW_CONF_THRESHOLD = 0.4
 RECOVER_THRESHOLD = 0.25
+TEMPLATE_RECOVER_SCORE = 0.6
 _SAT_MIN, _VAL_MIN = 60, 50
 _NAN = float("nan")
 
@@ -99,12 +100,12 @@ class DotTracker:
 
     # -- colour-lock recovery --------------------------------------------------------------------
     def _recover(self, frame: np.ndarray) -> tuple[float, float] | None:
-        if not self._color_ok:
-            return None
         base = self.spec.box * 3
         radius = min(base + 25 * self._lost_frames, max(frame.shape[:2]))
         lx, ly = self._last
         rect = _clip_box(lx, ly, 2 * radius, frame.shape)
+        if not self._color_ok:
+            return self._recover_by_template(frame, rect)
         mask, (ox, oy) = self._backproject(frame, rect)
         n, _, stats, cents = cv2.connectedComponentsWithStats(mask)
         best, best_d = None, 1e18
@@ -116,6 +117,19 @@ class DotTracker:
             if d < best_d:
                 best, best_d = (float(cx), float(cy)), d
         return best
+
+    def _recover_by_template(self, frame: np.ndarray, rect) -> tuple[float, float] | None:
+        """White, grey and black dots have no hue to lock onto: search for the seed patch itself."""
+        x, y, w, h = rect
+        th, tw = self._gray0.shape
+        if w <= tw or h <= th:
+            return None
+        gray = cv2.cvtColor(frame[y:y + h, x:x + w], cv2.COLOR_BGR2GRAY).astype(np.float32)
+        res = cv2.matchTemplate(gray, self._gray0, cv2.TM_CCOEFF_NORMED)
+        _, score, _, loc = cv2.minMaxLoc(res)
+        if score < TEMPLATE_RECOVER_SCORE:
+            return None
+        return float(x + loc[0] + tw / 2), float(y + loc[1] + th / 2)
 
     def _refined_center(self, frame: np.ndarray, bbox) -> tuple[float, float]:
         x, y, w, h = bbox
@@ -135,7 +149,7 @@ class DotTracker:
         bbox = tuple(int(round(v)) for v in bbox) if ok else None
         conf = self._similarity(frame, bbox) if ok else 0.0
         flags = 0
-        if (not ok) or (self._color_ok and conf < RECOVER_THRESHOLD):
+        if (not ok) or conf < RECOVER_THRESHOLD:
             found = self._recover(frame)
             if found is not None:
                 nb = _clip_box(found[0], found[1], self.spec.box, frame.shape)
