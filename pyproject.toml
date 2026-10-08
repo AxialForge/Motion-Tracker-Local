@@ -1,0 +1,27 @@
+[project]
+name = "motion-tracker"
+version = "0.1.0"
+description = "Local motion-tracking tool: phone video of a press line to timed X/Y data and cycle events."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "opencv-contrib-python>=4.8",
+    "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+mt = "motion_tracker.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/motion_tracker"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
