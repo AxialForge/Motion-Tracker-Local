@@ -167,17 +167,53 @@ def line_cross(track: Track, *, axis: str, value: float, direction: str = "eithe
     return out
 
 
+def _seg_rect_params(p0, p1, rect) -> tuple[float, float] | None:
+    """Parameter range [s_in, s_out] within [0, 1] where segment p0->p1 lies inside the rectangle."""
+    x0, y0, x1, y1 = rect
+    lo, hi = 0.0, 1.0
+    for a, d, mn, mx in ((p0[0], p1[0] - p0[0], x0, x1), (p0[1], p1[1] - p0[1], y0, y1)):
+        if abs(d) < 1e-12:
+            if not (mn <= a <= mx):
+                return None
+            continue
+        sa, sb = sorted(((mn - a) / d, (mx - a) / d))
+        lo, hi = max(lo, sa), min(hi, sb)
+    return (lo, hi) if lo <= hi else None
+
+
+def rect_crossings(track: Track, rect: tuple[float, float, float, float]) -> list[tuple[float, float, str]]:
+    """(time, fractional frame, "enter" | "leave") for a point path against a rectangle (x0, y0, x1, y1).
+
+    Works on measured samples only, so a short gap does not fake a leave and re-enter. Crossing
+    times are interpolated along the segment between samples (sub-frame).
+    """
+    ok = ~(np.isnan(track.x) | np.isnan(track.y))
+    t, f, x, y = track.t[ok], track.frame[ok].astype(float), track.x[ok], track.y[ok]
+    x0, y0, x1, y1 = rect
+    inside = (x >= x0) & (x <= x1) & (y >= y0) & (y <= y1)
+    out = []
+    for i in range(len(t) - 1):
+        p0, p1 = (x[i], y[i]), (x[i + 1], y[i + 1])
+        span = _seg_rect_params(p0, p1, rect)
+        if span is None:
+            continue
+        s_in, s_out = span
+        ev = []
+        if not inside[i] and inside[i + 1]:
+            ev.append((s_in, "enter"))
+        elif inside[i] and not inside[i + 1]:
+            ev.append((s_out, "leave"))
+        elif not inside[i] and not inside[i + 1]:  # passed straight through between two frames
+            ev += [(s_in, "enter"), (s_out, "leave")]
+        for sv, kind in ev:
+            out.append((float(t[i] + sv * (t[i + 1] - t[i])), float(f[i] + sv * (f[i + 1] - f[i])), kind))
+    return out
+
+
 def zone_transitions(track: Track, rect: tuple[float, float, float, float], zone: str) -> list[Event]:
     """Point enters or leaves a rectangular zone (x0, y0, x1, y1)."""
-    x0, y0, x1, y1 = rect
-    inside = (track.x >= x0) & (track.x <= x1) & (track.y >= y0) & (track.y <= y1) & ~np.isnan(track.x)
-    out = []
-    for i in range(1, len(inside)):
-        if inside[i] != inside[i - 1]:
-            when = float((track.t[i - 1] + track.t[i]) / 2)  # frame-level resolution
-            nm = f"{track.name} enters {zone}" if inside[i] else f"{track.name} leaves {zone}"
-            out.append(Event(nm, "custom", track.name, when, _frame_at(track, when), {"zone": zone}))
-    return out
+    return [Event(f"{track.name} {'enters' if k == 'enter' else 'leaves'} {zone}", "custom", track.name, w, fr, {"zone": zone})
+            for w, fr, k in rect_crossings(track, rect)]
 
 
 def moving_state(track: Track, *, speed_threshold: float, min_hold: int = 3, smooth_window: int = 5) -> list[Event]:

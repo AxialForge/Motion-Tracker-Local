@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 from openpyxl import Workbook
 
+from .billets import BilletAnalysis
 from .events import RamAnalysis
 from .model import INTERPOLATED, LOST, LOW_CONF, RECOVERED, Event, Scale, Track
 from .summary import stats
@@ -84,3 +85,30 @@ def write_table(path: str | Path, head: list[str], rows: list[list]) -> Path:
             w.writerow(head)
             w.writerows(rows)
     return path
+
+
+def billet_rows(b: BilletAnalysis) -> tuple[list[str], list[list]]:
+    """One row per billet: first/last seen, gap since the previous billet, and each station visit."""
+    stations = list(b.dwell)
+    transfers = list(b.transfer)
+    head = ["billet", "first_seen_s", "last_seen_s", "gap_since_previous_s"]
+    for st in stations:
+        head += [f"{st}_enter_s", f"{st}_leave_s", f"{st}_dwell_s"]
+    head += [f"transfer_{k.replace(' -> ', '_to_')}_s" for k in transfers]
+    rows, prev = [], None
+    for name in sorted(b.first_seen, key=b.first_seen.get):
+        r = [name, _num(b.first_seen[name], 4), _num(b.last_seen[name], 4),
+             "" if prev is None else _num(b.first_seen[name] - prev, 4)]
+        prev = b.first_seen[name]
+        visits = {v.station: v for v in b.visits.get(name, [])}
+        for st in stations:
+            v = visits.get(st)
+            r += ["", "", ""] if v is None else [_num(v.enter, 4) if v.enter is not None else "", _num(v.leave, 4) if v.leave is not None else "",
+                                                  _num(v.dwell, 4) if v.dwell is not None else ""]
+        vs = b.visits.get(name, [])
+        for k in transfers:
+            a, c = k.split(" -> ")
+            va, vc = visits.get(a), visits.get(c)
+            r.append(_num(vc.enter - va.leave, 4) if va and vc and va.leave is not None and vc.enter is not None else "")
+        rows.append(r)
+    return head, rows

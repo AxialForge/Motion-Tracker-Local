@@ -12,12 +12,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import analysis, export, plots
+from .billets import BilletAnalysis, Station, analyze_billets
 from .events import RamAnalysis, detect_ram, extrema, line_cross, moving_state, zone_transitions
 from .ingest import FrameReader, probe
 from .model import Event, Scale
 from .session import Session
 from .summary import Stats, durations_between, stats
-from .tracking import PointSpec, track_points
+from .tracking import BlobConfig, BlobDetector, PointSpec, track_points
 
 LOW_HEALTH = 0.5  # mean confidence below this suggests the point was seeded in the wrong place
 
@@ -31,6 +32,7 @@ class Run:
     fill_gaps: int = 0
     smooth: int = 5
     scale: dict | None = None  # {"p1": [x, y], "p2": [x, y], "distance": 500, "unit": "mm"}
+    billets: dict | None = None  # {"detect": {...}, "stations": [{"name", "rect"}], "exit_zone": [...], ...}
 
     @classmethod
     def load(cls, path: str | Path) -> Run:
@@ -44,8 +46,12 @@ class Run:
 
     def validate(self) -> None:
         names = {p["name"] for p in self.points}
-        if not names or len(names) != len(self.points):
-            raise ValueError("run needs at least one point, with unique names")
+        if len(names) != len(self.points):
+            raise ValueError("point names must be unique")
+        if not names and not self.billets:
+            raise ValueError("run needs at least one point or billet detection")
+        if self.billets:
+            BlobConfig.from_dict(self.billets.get("detect", {}))  # raises ValueError on bad settings
         kinds = {"ram", "line_cross", "zone", "moving", "extrema"}
         for a in self.analyses:
             if a.get("type") not in kinds:
@@ -54,7 +60,9 @@ class Run:
                 raise ValueError(f"analysis refers to unknown point {a.get('item')!r}")
 
     def point_specs(self) -> list[PointSpec]:
-        return [PointSpec(p["name"], p["x"], p["y"], p.get("seed_frame", 0), p.get("algo", "csrt"), p.get("box", 32))
+        known = {"name", "x", "y", "seed_frame", "algo", "box", "mode"}
+        return [PointSpec(p["name"], p["x"], p["y"], p.get("seed_frame", 0), p.get("algo", "csrt"), p.get("box", 32),
+                          p.get("mode", "dot_tracking"), {k: v for k, v in p.items() if k not in known})
                 for p in self.points]
 
     def scale_obj(self) -> Scale | None:
@@ -70,6 +78,7 @@ class RunResult:
     segment_stats: dict[str, Stats]
     cycle_stats: dict[str, Stats]
     warnings: list[str]
+    billets: BilletAnalysis | None = None
 
 
 def _analyse(run: Run, tracks) -> tuple[list[Event], dict[str, RamAnalysis]]:
@@ -100,7 +109,8 @@ def apply_run(run: Run, clip: str, session_path: str | Path, *, plot_path: str |
               progress=None, cancel=None) -> RunResult:
     """Track, analyse, and save everything for one clip into its own session file."""
     info = probe(clip)
-    tracks = track_points(FrameReader(clip, info), run.point_specs(), progress=progress, cancel=cancel)
+    consumers = [BlobDetector(BlobConfig.from_dict(run.billets.get("detect", {})))] if run.billets else None
+    tracks = track_points(FrameReader(clip, info), run.point_specs(), progress=progress, cancel=cancel, consumers=consumers)
     warnings = []
     for tr in tracks:
         if len(tr) and float(tr.conf.mean()) < LOW_HEALTH:
@@ -110,6 +120,17 @@ def apply_run(run: Run, clip: str, session_path: str | Path, *, plot_path: str |
     if run.fill_gaps:
         tracks = [analysis.fill_gaps(t, run.fill_gaps) for t in tracks]
     events, rams = _analyse(run, tracks)
+    bil = None
+    if run.billets:
+        b = run.billets
+        bil = analyze_billets(
+            [t for t in tracks if t.kind == "billet"], (info.width, info.height),
+            stations=[Station(st["name"], tuple(st["rect"])) for st in b.get("stations", [])],
+            exit_zone=tuple(b["exit_zone"]) if b.get("exit_zone") else None,
+            edge_margin=b.get("edge_margin", 30.0), speed_threshold=b.get("speed_threshold"))
+        events = sorted(events + bil.events, key=lambda e: e.t)
+        if not bil.count:
+            warnings.append("no billets detected; check the brightness threshold and region")
     seg = {s["name"]: stats(durations_between(events, s["start"], s["end"])) for s in run.segments}
     cyc = {}
     for item, r in rams.items():
@@ -123,7 +144,7 @@ def apply_run(run: Run, clip: str, session_path: str | Path, *, plot_path: str |
         s.save_events(events, replace_group=None)
     if plot_path:
         plots.plot_tracks(tracks, events, plot_path, scale=run.scale_obj(), title=Path(clip).name)
-    return RunResult(clip, events, rams, seg, cyc, warnings)
+    return RunResult(clip, events, rams, seg, cyc, warnings, bil)
 
 
 def run_batch(run: Run, clips: list[str], outdir: str | Path, *, xlsx: bool = False) -> Path:
@@ -142,9 +163,16 @@ def run_batch(run: Run, clips: list[str], outdir: str | Path, *, xlsx: bool = Fa
             export.write_table(d / f"events.{ext}", *export.event_rows(res.events))
         for item, r in res.rams.items():
             export.write_table(d / f"cycle_summary_{item}.{ext}", *export.summary_rows(r))
-        for name, st in {**res.cycle_stats, **res.segment_stats}.items():
+        extra: dict[str, Stats] = {}
+        if res.billets:
+            export.write_table(d / f"billets.{ext}", *export.billet_rows(res.billets))
+            extra["Billet count"] = Stats(res.billets.count, *(float("nan"),) * 4, [])
+            extra["Gap between billets"] = stats(res.billets.gaps)
+            extra.update({f"{k} dwell": stats(v) for k, v in res.billets.dwell.items()})
+            extra.update({f"transfer {k}": stats(v) for k, v in res.billets.transfer.items()})
+        for name, st in {**res.cycle_stats, **res.segment_stats, **extra}.items():
             rows.append([stem, name, st.n, _r(st.mean), _r(st.min), _r(st.max), _r(st.std), "; ".join(res.warnings)])
-        if not (res.cycle_stats or res.segment_stats):
+        if not (res.cycle_stats or res.segment_stats or extra):
             rows.append([stem, "(no metrics)", 0, "", "", "", "", "; ".join(res.warnings)])
     path = out / f"batch_summary.{ext}"
     export.write_table(path, ["clip", "metric", "n", "mean_s", "min_s", "max_s", "std_s", "warnings"], rows)

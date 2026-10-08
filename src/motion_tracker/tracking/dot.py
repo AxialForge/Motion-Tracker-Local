@@ -48,7 +48,7 @@ class DotTracker:
         self._lost_frames = 0
 
     # -- setup ---------------------------------------------------------------------------------
-    def init(self, frame: np.ndarray) -> None:
+    def init(self, frame: np.ndarray) -> Sample | None:
         s = self.spec
         x, y, w, h = _clip_box(s.x, s.y, s.box, frame.shape)
         self._bbox0 = (x, y, w, h)
@@ -63,6 +63,7 @@ class DotTracker:
         else:
             self._gray0 = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY).astype(np.float32)
         self._start(frame, (x, y, w, h))
+        return None
 
     def _start(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> None:
         self._tr = _make_cv_tracker(self.spec.algo)

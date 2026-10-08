@@ -21,11 +21,21 @@ with known ground truth.
 - Plots: position vs time per item with events marked (PNG or PDF).
 - Saved runs: a JSON file of points + analyses + segment bounds, applied to one clip or a batch
   (`mt run`), with per-clip sessions, exports, plots and one combined summary. See `runs/ram_example.json`.
+- **Hard-edge tracking (no dots):** follow one straight edge, e.g. the bottom of the ram, to sub-pixel
+  precision (`mt track clip --edge "ram edge,480,190,horizontal"`). Measures one axis (a horizontal edge gives
+  Y, a vertical edge gives X). Ram events work on an edge track exactly as on a dot.
+- **Billet blob tracking (no clicks):** glowing billets are found by brightness and each gets an ID
+  (`mt billets clip --station S1,340,260,460,340 --station S2,... --exit-zone 30 260 130 340`).
+  Events: exits induction heater, enters/leaves frame, placed in / leaves station N, leaves press, dwell per station,
+  transfer between stations, billet count and gap between billets, picked up by a tool track (proximity).
+  A billet hidden for a few frames keeps its ID; the gap is flagged, never invented.
+  Limits: touching billets that merge into one blob are not split; presence while hidden by tooling is the
+  die-station zone mode (Phase 3); the two "press waiting / billet waiting" cycle events are not built.
 - Dot colour is read from each seed patch, so colour can differ per video or per point. Colourless dots
   (white, grey, black) fall back to template matching: they track and recover, but with lower precision
   (about 3 px after re-acquisition vs under 1 px for coloured dots), so prefer coloured dots.
 
-Not yet: any UI, billet blob tracking (Phase 2; needed for the billet events), NVDEC decode,
+Not yet: any UI, zone presence for hidden billets and operator motion (Phase 3), NVDEC decode,
 annotated video, backward re-tracking, stabilization, multi-phone sync.
 
 ## Setup (Windows)

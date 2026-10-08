@@ -13,7 +13,7 @@ import numpy as np  # noqa: E402
 from .model import INTERPOLATED, LOST, LOW_CONF, Event, Scale, Track  # noqa: E402
 
 
-def plot_tracks(tracks: list[Track], events: list[Event], path: str | Path, *, axis: str = "y",
+def plot_tracks(tracks: list[Track], events: list[Event], path: str | Path, *, axis: str = "auto",
                 scale: Scale | None = None, title: str | None = None) -> Path:
     """One lane per item (shared time axis). Low-confidence and interpolated stretches are marked,
     lost stretches are left as gaps, events are vertical lines labelled by name."""
@@ -21,7 +21,8 @@ def plot_tracks(tracks: list[Track], events: list[Event], path: str | Path, *, a
     unit = scale.unit if scale else "px"
     fig, axes = plt.subplots(len(tracks), 1, sharex=True, figsize=(11, 2.6 * len(tracks) + 0.8), squeeze=False)
     for ax, tr in zip(axes[:, 0], tracks):
-        v = (tr.x if axis == "x" else tr.y) * k
+        an = axis if axis != "auto" else ("x" if tr.kind == "billet" else "y")  # billets travel along X
+        v = (tr.x if an == "x" else tr.y) * k
         ax.plot(tr.t, v, lw=1.3, color="#1f4e9c", label=tr.name)
         weak = ((tr.flags & (LOW_CONF | INTERPOLATED)) > 0) & ~np.isnan(v)
         ax.plot(tr.t[weak], v[weak], ".", ms=4, color="#d9822b", label="low confidence / interpolated")
@@ -31,8 +32,8 @@ def plot_tracks(tracks: list[Track], events: list[Event], path: str | Path, *, a
         for e in events:
             if e.item == tr.name:
                 ax.axvline(e.t, color="#777", lw=0.6, ls="--")
-        ax.set_ylabel(f"{tr.name}  {axis.upper()} ({unit})")
-        if axis == "y":
+        ax.set_ylabel(f"{tr.name}  {an.upper()} ({unit})")
+        if an == "y":
             ax.invert_yaxis()  # image Y grows downward; plot so up means up
         ax.grid(alpha=0.25)
         ax.legend(loc="upper right", fontsize=7, frameon=False)

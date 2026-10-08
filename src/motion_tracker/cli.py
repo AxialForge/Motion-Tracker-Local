@@ -24,6 +24,44 @@ def _point(s: str) -> PointSpec:
                      p[3] if len(p) > 3 else "csrt", int(p[5]) if len(p) > 5 else 32)
 
 
+def _edge(s: str) -> PointSpec:
+    """name,x,y,horizontal|vertical[,length[,search]]"""
+    p = s.split(",")
+    if len(p) < 4 or p[3] not in ("horizontal", "vertical"):
+        raise argparse.ArgumentTypeError("use name,x,y,horizontal|vertical[,length[,search]]")
+    opts = {"orientation": p[3], **({"length": int(p[4])} if len(p) > 4 else {}), **({"search": int(p[5])} if len(p) > 5 else {})}
+    return PointSpec(p[0], float(p[1]), float(p[2]), mode="edge_tracking", options=opts)
+
+
+def _station(s: str):
+    from .billets import Station
+
+    p = s.split(",")
+    if len(p) != 5:
+        raise argparse.ArgumentTypeError("use name,x0,y0,x1,y1")
+    return Station(p[0], tuple(float(v) for v in p[1:]))
+
+
+def cmd_billets(a) -> int:
+    from .billets import analyze_billets
+    from .tracking import BlobConfig, BlobDetector
+
+    info = probe(a.clip)
+    cfg = BlobConfig(threshold=a.threshold, min_area=a.min_area, roi=tuple(a.roi) if a.roi else None)
+    tracks = track_points(FrameReader(a.clip, info), a.edge or [], consumers=[BlobDetector(cfg)])
+    bil = analyze_billets([t for t in tracks if t.kind == "billet"], (info.width, info.height), stations=a.station or [],
+                          exit_zone=tuple(a.exit_zone) if a.exit_zone else None)
+    with Session(a.session) as s:
+        s.set_video(info)
+        for t in tracks:
+            s.save_track(t)
+        s.save_events(bil.events, replace_group="billet")
+    print(f"{bil.count} billets; gaps between billets (s): {[round(g, 2) for g in bil.gaps]}")
+    for k, v in {**{f"{k} dwell": v for k, v in bil.dwell.items()}, **{f"transfer {k}": v for k, v in bil.transfer.items()}}.items():
+        print(f"  {k}: {[round(x, 2) for x in v]}")
+    return 0
+
+
 def cmd_probe(a) -> int:
     info = probe(a.clip)
     ts = frame_timestamps(a.clip)
@@ -43,7 +81,9 @@ def cmd_track(a) -> int:
         if done % 100 == 0 or done == total:
             print(f"\r{done}/{total} frames  {done / (time.perf_counter() - t0):.0f} fps", end="", file=sys.stderr)
 
-    tracks = track_points(reader, a.point, a.start, a.stop, progress)
+    if not (a.point or a.edge):
+        raise SystemExit("give at least one -p point or --edge")
+    tracks = track_points(reader, a.point + a.edge, a.start, a.stop, progress)
     print(file=sys.stderr)
     with Session(a.session) as s:
         s.set_video(info)
@@ -118,12 +158,24 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_probe)
     p = sub.add_parser("track", help="track points and save to a session file")
     p.add_argument("clip")
-    p.add_argument("-p", "--point", action="append", type=_point, required=True, metavar="NAME,X,Y[,ALGO[,SEED[,BOX]]]")
+    p.add_argument("-p", "--point", action="append", type=_point, default=[], metavar="NAME,X,Y[,ALGO[,SEED[,BOX]]]")
+    p.add_argument("--edge", action="append", type=_edge, default=[], metavar="NAME,X,Y,ORIENT[,LENGTH[,SEARCH]]",
+                   help="track a hard edge instead of a dot (horizontal edge measures Y, vertical measures X)")
     p.add_argument("-s", "--session", default="session.mtp")
     p.add_argument("--start", type=int, default=0)
     p.add_argument("--stop", type=int)
     p.add_argument("--fill-gaps", type=int, default=0, help="interpolate lost runs up to N frames (flagged)")
     p.set_defaults(fn=cmd_track)
+    p = sub.add_parser("billets", help="find glowing billets (no clicks) and time them through stations")
+    p.add_argument("clip")
+    p.add_argument("-s", "--session", default="session.mtp")
+    p.add_argument("--threshold", type=int, default=220, help="brightness 0-255; blown-out billets are near 255")
+    p.add_argument("--min-area", type=int, default=150)
+    p.add_argument("--roi", type=int, nargs=4, metavar=("X0", "Y0", "X1", "Y1"))
+    p.add_argument("--station", action="append", type=_station, metavar="NAME,X0,Y0,X1,Y1", help="in travel order; repeatable")
+    p.add_argument("--exit-zone", type=int, nargs=4, metavar=("X0", "Y0", "X1", "Y1"), help="where billets leave the heater")
+    p.add_argument("--edge", action="append", type=_edge, metavar="NAME,X,Y,ORIENT", help="also track a hard edge")
+    p.set_defaults(fn=cmd_billets)
     p = sub.add_parser("events", help="detect ram events from a tracked point")
     p.add_argument("session")
     p.add_argument("item")

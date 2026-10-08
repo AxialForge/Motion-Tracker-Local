@@ -1,4 +1,6 @@
-from .base import PointSpec, TrackerPlugin, get_plugin, register_plugin, track_points
-from . import dot  # noqa: F401  (registers the dot-tracking plugin)
+from .base import FrameConsumer, PointSpec, Sample, TrackerPlugin, get_plugin, register_plugin, track_points
+from .blobs import BlobConfig, BlobDetector
+from . import dot, edge  # noqa: F401  (register the dot and edge tracking plugins)
 
-__all__ = ["PointSpec", "TrackerPlugin", "get_plugin", "register_plugin", "track_points"]
+__all__ = ["BlobConfig", "BlobDetector", "FrameConsumer", "PointSpec", "Sample", "TrackerPlugin",
+           "get_plugin", "register_plugin", "track_points"]
