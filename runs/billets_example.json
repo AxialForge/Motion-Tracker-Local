@@ -1,0 +1,13 @@
+{
+  "name": "Billets through two stations",
+  "points": [],
+  "billets": {
+    "detect": {"threshold": 220, "min_area": 150, "max_jump": 120},
+    "exit_zone": [30, 260, 130, 340],
+    "stations": [
+      {"name": "S1", "rect": [340, 260, 460, 340]},
+      {"name": "S2", "rect": [640, 260, 760, 340]}
+    ],
+    "edge_margin": 30
+  }
+}

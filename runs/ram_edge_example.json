@@ -1,0 +1,9 @@
+{
+  "name": "Ram stroke from a hard edge (no dots)",
+  "points": [
+    {"name": "ram edge", "mode": "edge_tracking", "x": 480, "y": 190,
+     "orientation": "horizontal", "length": 80, "search": 40}
+  ],
+  "analyses": [{"type": "ram", "item": "ram edge"}],
+  "smooth": 5
+}
